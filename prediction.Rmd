@@ -1,0 +1,435 @@
+---
+title: "Analysis of a systemic bleomycin model of scleroderma: Predicting lung function from skin expression"
+author: "[Ron Ammar](mailto:ron.ammar@bms.com)"
+date: '`r format(Sys.time(), "%A, %B %e, %Y")`'
+header-includes:
+- \usepackage{fancyhdr}
+- \usepackage{lastpage}
+- \usepackage{pdflscape}
+- \usepackage{titling}
+- \pagestyle{fancy}
+- \fancyhead[LE,RO]{}
+- \rhead{\includegraphics[width=3.5cm]{bms_logo.jpg}}
+- \fancyfoot[C]{\textit{BMS Confidential}}
+- \fancyfoot[LE,RO]{\thepage\ of \pageref{LastPage}}
+- \newcommand{\blandscape}{\begin{landscape}}
+- \newcommand{\elandscape}{\end{landscape}}
+- \pretitle{\begin{center}\LARGE\includegraphics[width=12cm]{bms_logo.jpg}\\[\bigskipamount]}
+- \posttitle{\end{center}}
+bibliography:
+- ../../resources/references/google_scholar_library.bib
+- ../../resources/references/online_resources.bib
+- ../../resources/references/pubmed_export_with_cite_key_reformatted.bib
+- ../../resources/references/r_citations.bib
+- ../../resources/references/biorxiv_library.bib
+- ../../resources/references/manually_edited_library.bib
+csl: ../../resources/references/elsevier-harvard2.csl
+output: 
+  pdf_document:
+    toc: true
+    toc_depth: 4  # default is depth of 3
+    number_sections: true
+---
+
+```{r, echo=FALSE}
+# Clear the current session, to avoid errors from persisting data structures
+# NOTE: when using parameterized RMarkdown, we cannot remove the params declared
+# in the YAML header.
+rm(list=ls())
+# Free up memory by forcing garbage collection
+invisible(gc())
+# Pretty printing in knitr
+library(printr)
+# Manually set the seed to an arbitrary number for consistency in reports
+set.seed(1234, kind="Mersenne-Twister", normal.kind="Inversion")
+# Do not convert character vectors to factors unless explicitly indicated
+options(stringsAsFactors=FALSE)
+
+startTime <- Sys.time()
+```
+
+```{r, global_options, include=FALSE}
+# use include=FALSE to have the chunk evaluated, but neither the code nor its output displayed.
+knitr::opts_chunk$set(echo=FALSE, message=FALSE, fig.align="center",
+                      fig.width=12, fig.height=8,
+                      fig.path='figs/', 
+                      dpi=300,  # knitr default is 72
+                      dev=c('pdf', 'png')) # output figures as both pdf and png
+```
+
+```{r, load_libraries_setwd}
+library(caret)
+library(doParallel)
+library(ggplot2)
+library(glmnet)
+library(parallel)
+library(tidyr)
+library(dplyr)  # attach dplyr environment last so it's first in search path
+
+if ("rstudioapi" %in% installed.packages()[, "Package"] & rstudioapi::isAvailable() & interactive()) {
+  # When in RStudio, dynamically sets working directory to path of this script
+  setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+  # Set the default ggplot theme to "theme_bw" with default font size
+  theme_set(theme_bw())
+} else {
+  # Set the default ggplot theme to "theme_bw" with specified base font size
+  theme_set(theme_bw(20))
+}
+
+# Check if stash is mounted
+if (length(list.files("/stash", all.files=TRUE, include.dirs=TRUE, no..=TRUE)) == 0) {
+  warning("/stash is not mounted")
+}
+
+
+##### Constants
+NUM_CORES <- detectCores(logical=FALSE)  # Use all *physical* cores
+CV_FOLDS <- 5
+CV_REPEATS <- 100  # See Harrell's comment: https://stats.stackexchange.com/q/61090/84115
+
+##### Parallelization
+cl <- makeCluster(NUM_CORES)
+registerDoParallel(cl)
+```
+
+\newpage
+
+# Background
+
+Systemic sclerosis (SSc, the systemic form of scleroderma) is a chronic progressive disease characterized by three main features:  vascular injury, immunological abnormalities, and fibrosis of the skin and various internal organs. Fibrosis is the hallmark feature of SSc and is responsible for a majority of the morbidity and mortality associated with this disease. SSc patients with significant internal organ involvement have a 10-year survivial rate of only 38% (Korman B et al. Curr Rheumatol Rep (2015) 17:21). The mechanism underlying the development of fibrosis remains unclear, and currently there are no effective therapies for this disease.
+
+A well-characterized mouse model of SSc involves daily subcutaneous injections of the antitumor antibiotic bleomycin (BLM), which leads to localized dermal fibrosis as well as pulmonary fibrosis. In-house, we have termed this the “Systemic Bleomycin Model” to distinguish it from the already-established Intratracheal (IT) Model. Our lab plans to utilize this model, which mimics several key features of human SSc, to examine the pathological mechanisms underlying the development and progression of fibrosis in SSc. We have just established this model, and we have conducted preliminary analyses to characterize the model. As part of this characterization – and in an effort to achieve the objectives listed below – the current project aims to conduct a thorough transcriptomics analysis of skin and lung samples from these mice.
+
+It is well established that the TGF-$\beta$ signaling pathway is required for bleomycin-induced fibrosis in this model. Thus, in the present study we used the ALK5 (TGF-$\beta$ receptor I) inhibitor SB525334 to determine whether we could cause regression of dermal and pulmonary fibrosis by inhibiting TGF-$\beta$ signaling.
+
+# Purpose
+
+The objectives of this study are to:
+
+1. Characterize the development of dermal and pulmonary fibrosis in the systemic bleomycin mouse model.
+1. **Compare & contrast lung and skin signatures to determine if a skin biopsy could function as a surrogate for a lung-based diagnostics (eg. CT scan).**
+1. Characterize the (potential) resolution of dermal and pulmonary fibrosis in the systemic bleomycin mouse model.
+1. Identify potential therapeutic targets in SSc.
+1. Achieve better understanding the effects of the ALK5 inhibitor SB525334 in the lungs and skin.
+1. In terms of pulmonary fibrosis, compare the results from this analysis to those obtained from Sumanta Mukherjee’s IT bleomycin study.
+
+# Experimental Design
+
+![](../../resources/experimental_design.png)
+![](../../resources/group_and_animal_numbers.png)
+
+Female C57BL/6 mice (~12 weeks old) were used for this study. An electric shaver was used to shave the interscapular region on the back of each mouse, and a non-toxic permanent marker was used to draw two small circles on the skin within the shaved area on each mouse. Fibrosis was induced by daily subcutaneous injections of either bleomycin (10mg/kg/day; 100µl per injection site of 1mg/ml solution for these ~20gm mice) or PBS (vehicle control) within the marked interscapular regions. Injections began on Day 0 and were done five times per week for two weeks, using a 27-gauge needle. (Bhattacharyya S. et al., Sci Transl Med 2014 Apr 16;6(232):232ra50; Huang J. et al., Ann Rheum Dis 2015 Apr 9. pii: annrheumdis-2014-207109).
+
+Beginning on Day 12, the ALK5 inhibitor SB525334 (30mpk) or vehicle was delivered (PO, BID dosing). Note that Groups 1-2 and Groups 3-4 were sacrificed on Day 7 and Day 14, respectively, and thus did not receive oral dosing. Groups 5-7 were sacrificed on Day 21. The last oral doses were administered on Day 27. Groups 8-10 were sacrificed on Day 28. Groups 11-12 (which specifically serve to assess resolution in this model, and do not examine the effect of SB525334) were sacrificed on Day 42.
+
+Please see original design PowerPoint deck for additional information on groups (12 groups, n = 8-10 per group at onset of study; a total of seven animals died during the study).
+
+\newpage
+
+# Analysis
+
+## A survey of available biological data for the SSc model
+
+```{r, load_data, results="hide", warning=FALSE}
+source("../../resources/load_data.R", chdir=TRUE)
+```
+
+The amount of collagen in the mouse lung and skin is measured via hydroxyproline (*hypro*). In the lung, we observe slightly elevated hypro on days 14 and 21 in the bleomycin-treated mice compared to PBS or the ALK5 inhibitor SB525334. In skin, the trend is not as apparent as SB525334 results in lower hypro at day 21, but by day 28 there is almost no distinction between it and vehicle.
+
+```{r, hyroxyproline}
+forPlotting <- biodata %>%
+  mutate(Treatment..PO.=ifelse(is.na(Treatment..PO.), "none", Treatment..PO.)) %>%
+  group_by(Treatment..SC., Treatment..PO., Timepoint) %>%
+  summarize(mean_skin=mean(Skin.Hypro..ug.HP...ug.skin., na.rm=TRUE),
+         sd_skin=sd(Skin.Hypro..ug.HP...ug.skin., na.rm=TRUE),
+         mean_lung=mean(Lung.Hypro..ug.HP....ml...il...pcl.., na.rm=TRUE),
+         sd_lung=sd(Lung.Hypro..ug.HP....ml...il...pcl.., na.rm=TRUE)) %>%
+  gather(measurement, value, mean_skin:sd_lung) %>%
+  separate(measurement, c("measurement", "tissue"), sep="_") %>%
+  spread(measurement, value)
+
+ggplot(forPlotting, aes(x=Timepoint, y=mean, color=Treatment..PO.)) +
+  facet_grid(tissue ~ Treatment..SC., scales="free_y") +
+  geom_point(pch=1, stroke=1) +
+  geom_errorbar(aes(ymin=mean-sd, ymax=mean+sd), width=1.5) +
+  labs(y="hydroxyproline")
+```
+
+Of the measurements available for mouse lung function, *inspiratory capacity* (IC) is considered to be the most analogous to *forced vital capacity* (FVC). We observe that IC is higher for PBS-treated mice than for bleomycin-treated mice. Interestingly, bleomycin-treated mice also treated with the ALK5 inhibitor SB525334 appear to show slightly higher IC. Where possibly, we have fit a line to show that there is a slight decreased in IC from day 21 to day 28. As might be expected, by day 42 the bleomycin-treated mice appear to have higher IC, suggesting fibrotic resolution is underway.
+
+```{r, inspiratory_capacity, warning=FALSE}
+ggplot(biodata, aes(x=Timepoint, y=Inspiratory.Capacity, color=Treatment..SC.)) +
+  facet_wrap(~ Treatment..PO.) +
+  geom_point() +
+  geom_smooth(method="lm")
+```
+
+## Modeling inspiratory capacity
+
+To model IC, we fit a linear regression model to the expression data, computed with an elastic net regularization path. We model each tissue separately.
+
+The objective of this exercise is to determine if a skin biopsy could function as a surrogate for a lung-based diagnostics (eg. CT scan).
+
+### Modeling IC with lung RNA-Seq
+
+For our first pass, we construct a model of IC using lung RNA-Seq data. Our hypothesis is that lung RNA-Seq should be indicative of lung phenotypic measures, including IC. Ideally, skin RNA-Seq would model IC as well as lung, at best.
+
+Before proceeding, we need to optimize the 2 parameters to `glmnet`'s elastic nets: $\alpha$, the elastic net mixing parameter, and $\lambda$, the penalty. We achieve this using a ***grid search*** over both parameters. The first step to perform the grid search is to use the same balanced cross-validation to preserve class distribution in the various folds for training. Aside from choosing the $\lambda$ penalty parameter, the grid search tests whether the $\alpha$ parameter has a strong effect on the performance of the model.
+
+```{r, model_data_lung_ic}
+modelDat <- doe %>%
+  filter(Tissue == "lung") %>%
+  left_join(select(biodata, animal_number, Inspiratory.Capacity), by="animal_number") %>%
+  filter(!is.na(Inspiratory.Capacity))
+x <- t(logCPM[, modelDat$ObservationID])
+y <- modelDat$Inspiratory.Capacity
+```
+
+```{r, create_folds}
+# In glmnet, one can specify which fold specific observations are in. This vector
+# is effectively an index with each position reflecting an observation and each
+# value at the position representing the specific fold ID. In the cv.glmnet()
+# code definition, if foldid is not specified, it is automatically generated
+# based on the size of the data and the number of folds. This is shown below:
+#
+#     N <- nrow(iris)  # using the iris dataset as an example
+#     nfolds <- 5
+#     foldid <- sample(rep(seq(nfolds), length = N))  # code from cv.glmnet()
+#
+# To read more, see my gist data_splitting.Rmd script:
+# http://biogit.pri.bms.com/gist/ammarr/ad682402ad7c014b3c3b
+
+# k-fold balanced cross validation
+createGlmnetFolds <- function(response, numFolds=CV_FOLDS) {
+  testFoldList <- createFolds(response, k=numFolds)
+  testFolds <- rep(-1, length(response))
+  # Format the fold vector as input for foldid parameter in cv.glmnet()
+  for (i in seq_len(numFolds)) {
+    testFolds[testFoldList[[i]]] <- i
+  }
+  
+  return(testFolds)
+}
+```
+
+```{r, grid_search_lung_ic}
+gridSearch <- function(x, y, errorType="mse", n=50) {
+  testFolds <- createGlmnetFolds(y)
+  alphaSearchSpace <- seq(0, 1, length=n)
+  lambdaSearchSpace <- 2 ^ seq(0, -13, length=n)  # trying to use the bounds of glmnet
+  
+  errorDF <- foreach (a = alphaSearchSpace, .inorder=FALSE, .combine=bind_rows,
+                      .packages=c("glmnet", "dplyr")) %dopar% {
+    # NOTE: cv.glmnet() is also parallelized. I've observed this *significantly*
+    # improves performance.
+    cvfit <- cv.glmnet(x, y, foldid=testFolds, family="gaussian",
+                       type.measure=errorType, lambda=lambdaSearchSpace, alpha=a,
+                       parallel=TRUE)
+    
+    return(data.frame(alpha=a, lambda=cvfit$lambda, error=cvfit$cvm, nzero=cvfit$nzero))
+  }
+  
+  ggplot(errorDF, aes(x=alpha, y=log(lambda, base=2), z=error, label=nzero)) + 
+    geom_raster(aes(fill=error)) +
+    scale_fill_distiller(palette="Spectral") +
+    # Use a formula to make the fewer non-zero coefs larger while making 0 tiny
+    geom_text(aes(size=(1/(ifelse(nzero == 0, 100, nzero))))) +
+    #geom_contour(aes(col=..level..)) +
+    labs(x=expression(alpha), y=expression(log[2] * lambda), fill="Error",
+         title="glmnet grid search performance annotated with # of non-zero coefficients") +
+    guides(size=FALSE)
+}
+
+gridSearch(x, y)
+```
+
+Based on this grid search, we observe that maximal performance can be obtained at any $\alpha > 0$. It demonstrates that model performance is not associated with $\alpha$, and we are free to set it to a high value to obtain a *lasso*-like model with reduced features (fewer genes). This is useful when deriving a minimal set of biomarkers for the IC.
+
+In order to construct our final model, we use the `caret` package and a fixed $\alpha$ value of 0.95, to optimize $\lambda$ across `r CV_REPEATS` repeats of `r CV_FOLDS`-fold cross-validation.
+
+```{r, repeated_cv_lung_ic, warning=FALSE}
+buildModel <- function(x, y, alpha=0.95, lambdaUpper=0, lambdaLower=-13, n=50,
+                       modelName="repeated_cv") {
+  # Define training control and model parameters
+  train_control <- trainControl(method="repeatedcv", number=CV_FOLDS, repeats=CV_REPEATS)
+  lambdaSearchSpace <- 2 ^ seq(lambdaUpper, lambdaLower, length=n)
+  modelParameters <- data.frame(alpha=alpha, lambda=lambdaSearchSpace)
+  
+  model <- train(x, y, method="glmnet", trControl=train_control, tuneGrid=modelParameters)
+  #print(model)
+  
+  # Save model for subsequent testing during development
+  if (!is.null(modelName)) {
+    saveRDS(model, paste0(modelName, "_" , round(unclass(Sys.time())),".rds"))
+  }
+  
+  g1 <- ggplot(model$results, aes(x=log(lambda, base=2), y=RMSE)) + 
+    geom_point(col="tomato") +
+    geom_errorbar(aes(ymin=RMSE-RMSESD, ymax=RMSE+RMSESD)) +
+    geom_vline(xintercept=log(model$bestTune$lambda, base=2), lty=2) +
+    labs(x=expression(log[2] * lambda))
+  
+  g2 <- ggplot(model$results, aes(x=log(lambda, base=2), y=Rsquared)) + 
+    geom_point(col="tomato") +
+    geom_errorbar(aes(ymin=Rsquared-RsquaredSD, ymax=Rsquared+RsquaredSD)) +
+    geom_vline(xintercept=log(model$bestTune$lambda, base=2), lty=2) +
+    labs(x=expression(log[2] * lambda), y=expression(R^2))
+  
+  return(list(model=model, rmse_plot=g1, rsquared_plot=g2))
+}
+
+out <- buildModel(x, y, modelName="lung_ic_repeated_cv")
+plot(out$rmse_plot)
+plot(out$rsquared_plot)
+```
+
+```{r, repeated_cv_lung_ic_performance}
+# We extract the best model with the best tuning parameters from the caret
+# training model object to retrieve the coefficients.
+getCoefficients <- function(model) {
+  coefficients <- coef(model$finalModel, s=model$bestTune$lambda)
+  # Get the non-zero coefficients
+  coefficients <- coefficients[which(abs(coefficients) > 0), , drop=FALSE]
+  coefficients <- data.frame(GeneID=rownames(coefficients), coef=coefficients[, 1]) %>%
+    left_join(select(annotation, GeneID, GeneName, GeneDescription), by="GeneID")
+  
+  return(arrange(coefficients, (desc(coef))))
+}
+
+getCoefficients(out$model)
+
+yHat <- predict(out$model, newdata = x, verbose=T)
+```
+
+In-sample testing yields an $R^2 = `r (cor(y, yHat)) ^ 2`$
+
+### Modeling IC with skin RNA-Seq
+
+Next, we construct a model of IC using *skin* RNA-Seq. 
+
+```{r, skin_ic_model, warning=FALSE}
+modelDat <- doe %>%
+  filter(Tissue == "skin") %>%
+  left_join(select(biodata, animal_number, Inspiratory.Capacity), by="animal_number") %>%
+  filter(!is.na(Inspiratory.Capacity))
+x <- t(logCPM[, modelDat$ObservationID])
+y <- modelDat$Inspiratory.Capacity
+
+gridSearch(x, y)
+
+out <- buildModel(x, y, modelName="skin_ic_repeated_cv")
+plot(out$rmse_plot)
+plot(out$rsquared_plot)
+
+getCoefficients(out$model)
+
+yHat <- predict(out$model, newdata = x, verbose=T)
+```
+
+In-sample testing yields an $R^2 = `r (cor(y, yHat)) ^ 2`$
+
+
+### Modeling IC data: Partitioning the data for more accurate testing
+
+To prevent overfitting and obtain a more realistic estimate of model performance, we train the model on a subset of the `r length(y)` observations, and test on the remainder.
+
+```{r, ic_models_split, warning=FALSE}
+assessPerformanceWithSplit <- function(splitTissue, trainingPercentage=0.9, n=100) {
+  # Note: trainingPercentage of 0.9 means 90% for training, 10% for testing
+  
+  perfStartTime <- Sys.time()
+
+  modelDat <- doe %>%
+    filter(Tissue == splitTissue) %>%
+    left_join(select(biodata, animal_number, Inspiratory.Capacity), by="animal_number") %>%
+    filter(!is.na(Inspiratory.Capacity))
+  x <- t(logCPM[, modelDat$ObservationID])
+  y <- modelDat$Inspiratory.Capacity
+    
+  performance <- foreach (i = seq_len(n), .inorder=FALSE, .packages=c("caret"),
+                          .combine=c,  # combine results into vector not list
+                          # .export deals with vars from global env that somehow
+                          # aren't showing up in the foreach. I can't even...
+                          .export=c("buildModel", "CV_REPEATS", "CV_FOLDS")) %dopar% {  
+    
+    trainIndexes <- createDataPartition(y, p=trainingPercentage)$Resample1
+    
+    xTrain <- x[trainIndexes, ]
+    yTrain <- y[trainIndexes]
+    xTest <- x[-trainIndexes, ]
+    yTest <- y[-trainIndexes]
+    
+    # Don't need grid search for each model- have already checked that a=0.95 is fine
+    #gridSearch(xTrain, yTrain)
+    
+    out <- buildModel(xTrain, yTrain, lambdaUpper=-5, lambdaLower=-10, n=10, modelName=NULL)
+    
+    yHat <- predict(out$model, newdata=xTest, verbose=T)
+  
+    return((cor(yTest, yHat)) ^ 2)
+  }
+  
+  message(paste("Performance estimate runtime =", format(Sys.time() - perfStartTime)))
+  
+  return(performance)
+}
+
+performanceLung <- assessPerformanceWithSplit("lung")
+performanceSkin <- assessPerformanceWithSplit("skin")
+
+forPlotting <- data.frame(lung=performanceLung, skin=performanceSkin) %>%
+  gather(tissue, RSquared)
+
+ggplot(forPlotting, aes(x=tissue, y=RSquared, fill=tissue)) +
+  geom_boxplot(width=0.2) +
+  guides(fill=FALSE) +
+  labs(y=expression(R^2))
+
+rm(forPlotting)
+```
+
+We observe that lung RNA-Seq data is generally more informative for predicting IC ($median(R^2_{lung}) \approx `r round(median(performanceLung), 1)`$). However, skin RNA-Seq is also informative ($median(R^2_{skin}) \approx `r round(median(performanceSkin), 1)`$) and may be used as a proxy for IC.
+
+With only `r length(y)` samples, we cannot construct a robust model of IC, but these results are encouraging and suggest that with more data, we may be able to model IC using expression data alone.
+
+# Future Directions
+
+We can also consider modeling lung hydroxyproline. We would benefit of this is there are many more measurements of hypro (n=`r length(na.omit(biodata$Lung.Hypro..ug.HP....ml...il...pcl..))`) vs IC (n=`r length(y)`).
+
+
+```{r, end_parallelization}
+stopCluster(cl)
+```
+
+
+# References
+
+<!-- From https://stackoverflow.com/questions/41532707/include-rmd-appendix-after-references
+ div tells Pandoc to include the refs here, rather than at the end of the document. -->
+ 
+<div id="refs"></div>
+
+------
+
+\newpage
+
+# System Information
+
+***Time required to process this report:*** *`r format(Sys.time() - startTime)`*
+
+***R session information:***
+
+```{r, echo_session_info}
+sessionInfo()
+```
+
+```{r, domino, results="asis"}
+if (Sys.getenv("DOMINO_WORKING_DIR") != "") {
+  cat(paste("\n\n## Domino environment details",
+            paste("**Domino User:**", Sys.getenv("DOMINO_PROJECT_OWNER")),
+            paste("**Domino Project:**", Sys.getenv("DOMINO_PROJECT_NAME")),
+            paste("**Domino Run ID:**", Sys.getenv("DOMINO_RUN_ID")),
+            paste("**Domino Run #:**", Sys.getenv("DOMINO_RUN_NUMBER")),
+            sep="\n\n"))
+}
+```

@@ -1,0 +1,595 @@
+---
+title: "Analysis of a systemic bleomycin model of scleroderma: Differential gene expression"
+author: "Ben Decato and Ron Ammar"
+date: '`r format(Sys.time(), "%A, %B %e, %Y")`'
+header-includes:
+- \usepackage{fancyhdr}
+- \usepackage{lastpage}
+- \usepackage{pdflscape}
+- \usepackage{titling}
+- \pagestyle{fancy}
+- \fancyhead[LE,RO]{}
+- \rhead{\includegraphics[width=3.5cm]{bms_logo.jpg}}
+- \fancyfoot[C]{\textit{BMS Confidential}}
+- \fancyfoot[LE,RO]{\thepage\ of \pageref{LastPage}}
+- \newcommand{\blandscape}{\begin{landscape}}
+- \newcommand{\elandscape}{\end{landscape}}
+- \pretitle{\begin{center}\LARGE\includegraphics[width=12cm]{bms_logo.jpg}\\[\bigskipamount]}
+- \posttitle{\end{center}}
+bibliography:
+- ../../resources/references/google_scholar_library.bib
+- ../../resources/references/online_resources.bib
+- ../../resources/references/pubmed_export_with_cite_key_reformatted.bib
+- ../../resources/references/r_citations.bib
+- ../../resources/references/biorxiv_library.bib
+- ../../resources/references/manually_edited_library.bib
+csl: ../../resources/references/elsevier-harvard2.csl
+output: 
+  pdf_document:
+    toc: true
+    toc_depth: 4  # default is depth of 3
+    number_sections: true
+---
+
+```{r, echo=FALSE}
+# Clear the current session, to avoid errors from persisting data structures
+# NOTE: when using parameterized RMarkdown, we cannot remove the params declared
+# in the YAML header.
+rm(list=setdiff(ls(), "params"))
+# Free up memory by forcing garbage collection
+invisible(gc())
+# Pretty printing in knitr
+library(printr)
+# Manually set the seed to an arbitrary number for consistency in reports
+set.seed(1234, kind="Mersenne-Twister", normal.kind="Inversion")
+# Do not convert character vectors to factors unless explicitly indicated
+options(stringsAsFactors=FALSE)
+
+startTime <- Sys.time()
+```
+
+```{r global_options, include=FALSE}
+# use include=FALSE to have the chunk evaluated, but neither the code nor its output displayed.
+knitr::opts_chunk$set(echo=FALSE, message=FALSE, fig.align="center",
+                      fig.width=12, fig.height=8,
+                      fig.path='figs/', 
+                      dpi=150,  # knitr default is 72
+                      dev=c('pdf', 'png')) # output figures as both pdf and png
+```
+
+```{r, load_libraries_setwd}
+library(annotables)
+library(Biobase)
+library(DGEobj)
+library(DGE.Tools2)
+library(ggplot2)
+library(GSEABase)
+library(pathwaze)
+library(tidyr)
+library(ggrepel)
+library(dplyr)  # attach dplyr environment last so it's first in search path
+
+if ("rstudioapi" %in% installed.packages()[, "Package"] & rstudioapi::isAvailable() & interactive()) {
+  # When in RStudio, dynamically sets working directory to path of this script
+  setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+  # Set the default ggplot theme to "theme_bw" with default font size
+  theme_set(theme_bw())
+} else {
+  # Set the default ggplot theme to "theme_bw" with specified base font size
+  theme_set(theme_bw(20))
+}
+
+# Check if stash is mounted
+if (length(list.files("/stash", all.files=TRUE, include.dirs=TRUE, no..=TRUE)) == 0) {
+  warning("/stash is not mounted")
+}
+
+# Constants
+FDR_THRESHOLD <- 0.1
+RIN_THRESHOLD <- 5.5  # see trends report
+TOP_N_GENE_SETS <- 25
+```
+
+\newpage
+
+# Background
+
+Systemic sclerosis (SSc, the systemic form of scleroderma) is a chronic progressive disease characterized by three main features:  vascular injury, immunological abnormalities, and fibrosis of the skin and various internal organs. Fibrosis is the hallmark feature of SSc and is responsible for a majority of the morbidity and mortality associated with this disease. SSc patients with significant internal organ involvement have a 10-year survivial rate of only 38% (Korman B et al. Curr Rheumatol Rep (2015) 17:21). The mechanism underlying the development of fibrosis remains unclear, and currently there are no effective therapies for this disease.
+
+A well-characterized mouse model of SSc involves daily subcutaneous injections of the antitumor antibiotic bleomycin (BLM), which leads to localized dermal fibrosis as well as pulmonary fibrosis. In-house, we have termed this the “Systemic Bleomycin Model” to distinguish it from the already-established Intratracheal (IT) Model. Our lab plans to utilize this model, which mimics several key features of human SSc, to examine the pathological mechanisms underlying the development and progression of fibrosis in SSc. We have just established this model, and we have conducted preliminary analyses to characterize the model. As part of this characterization – and in an effort to achieve the objectives listed below – the current project aims to conduct a thorough transcriptomics analysis of skin and lung samples from these mice.
+
+It is well established that the TGF-$\beta$ signaling pathway is required for bleomycin-induced fibrosis in this model. Thus, in the present study we used the ALK5 (TGF-$\beta$ receptor I) inhibitor SB525334 to determine whether we could cause regression of dermal and pulmonary fibrosis by inhibiting TGF-$\beta$ signaling.
+
+# Purpose
+
+The objectives of this study are to:
+
+1. **Characterize the development of dermal and pulmonary fibrosis in the systemic bleomycin mouse model.**
+1. Compare & contrast lung and skin signatures to determine if a skin biopsy could function as a surrogate for a lung-based diagnostics (eg. CT scan).
+1. Characterize the (potential) resolution of dermal and pulmonary fibrosis in the systemic bleomycin mouse model.
+1. Identify potential therapeutic targets in SSc.
+1. **Achieve better understanding the effects of the ALK5 inhibitor SB525334 in the lungs and skin.**
+
+# Experimental Design
+
+![](../../resources/experimental_design.png)
+![](../../resources/group_and_animal_numbers.png)
+
+Female C57BL/6 mice (~12 weeks old) were used for this study. An electric shaver was used to shave the interscapular region on the back of each mouse, and a non-toxic permanent marker was used to draw two small circles on the skin within the shaved area on each mouse. Fibrosis was induced by daily subcutaneous injections of either bleomycin (10mg/kg/day; 100µl per injection site of 1mg/ml solution for these ~20gm mice) or PBS (vehicle control) within the marked interscapular regions. Injections began on Day 0 and were done five times per week for two weeks, using a 27-gauge needle. (Bhattacharyya S. et al., Sci Transl Med 2014 Apr 16;6(232):232ra50; Huang J. et al., Ann Rheum Dis 2015 Apr 9. pii: annrheumdis-2014-207109).
+
+Beginning on Day 12, the ALK5 inhibitor SB525334 (30mpk) or vehicle was delivered (PO, BID dosing). Note that Groups 1-2 and Groups 3-4 were sacrificed on Day 7 and Day 14, respectively, and thus did not receive oral dosing. Groups 5-7 were sacrificed on Day 21. The last oral doses were administered on Day 27. Groups 8-10 were sacrificed on Day 28. Groups 11-12 (which specifically serve to assess resolution in this model, and do not examine the effect of SB525334) were sacrificed on Day 42.
+
+Please see original design PowerPoint deck for additional information on groups (12 groups, n = 8-10 per group at onset of study; a total of seven animals died during the study).
+
+\newpage
+
+# Analysis
+
+## Differentially-expressed genes
+
+```{r, load_data, results="hide"}
+source("../../resources/load_data.R", chdir=TRUE)
+```
+
+For our differential gene-expression analysis, we process lung and skin independently. We compute the number of differentially-expressed genes ("signatures"; FDR < `r FDR_THRESHOLD`).
+
+```{r, de_genes, warning=FALSE}
+sclerodermaContrasts <- function(tissueContrasts, currentTissue, dat, presentGenes) {
+  limmaDOE <- doe %>%
+    filter(Tissue == currentTissue) %>%
+    # Construct a multi-level factor combining treatment, compound and timepoint
+    mutate(trt_cmpd_time=paste(Treatment, Compound, Timepoint, sep="_"),
+           rn=make.names(ObservationID),
+           rna_quality=cut(RIN.number, breaks=c(0, RIN_THRESHOLD, 10),
+                           include.lowest=TRUE)) %>%
+    column_to_rownames("rn")
+  
+  limmaModel <- "~ 0 + trt_cmpd_time + Plate + RIN.number"
+  design <- model.matrix(as.formula(limmaModel), data=limmaDOE)
+  colnames(design) <- str_replace(make.names(colnames(design)), "^trt_cmpd_time", "")
+  
+  dat <- dat[presentGenes, ]
+  # Put the design and formula into the DGE object
+  design <- setAttributes(design, list(formula=limmaModel))
+  dat <- addItem(dat, item=design, itemName="limma_design", 
+                 itemType="designMatrix", overwrite=TRUE)
+  dat <- runVoom(dat, "limma_design", qualityWeights=TRUE, mvPlot=interactive())
+  dat <- runContrasts(dat, designMatrixName="limma_design",
+                      contrastList=as.list(tissueContrasts), runTopTreat=FALSE,
+                      Qvalue=TRUE, IHW=TRUE)
+  
+  # Following John's recommendation to rename contrasts
+  tissueContrastIndeces <- which(names(dat) %in% names(tissueContrasts))
+  names(dat)[tissueContrastIndeces] <- paste0("Bleo_", currentTissue, "_",
+                                            names(dat)[tissueContrastIndeces])
+  
+  # list of each individual contrast for lung
+  topTables <- setNames(lapply(tissueContrastIndeces, 
+                               function(i) {
+                                 getItem(dat, names(dat)[i]) %>%
+                                   rownames_to_column("gene_id") %>%
+                                   mutate(contrast=names(dat)[i],
+                                          tissue=currentTissue)
+                               }),
+                        names(dat)[tissueContrastIndeces])
+  
+  signatureSize <- t(bind_rows(lapply(topTables, function(e) nrow(filter(e, adj.P.Val < FDR_THRESHOLD))))) %>%
+    as.data.frame() %>%
+    rownames_to_column("contrast") %>%
+    mutate(tissue=currentTissue) %>%
+    rename(num_genes=V1)
+  
+  saveRDS(dat, paste("scleroderma", currentTissue, "P-20170104-0001.rds", sep="_"))
+  
+  return(list(dat=dat, topTables=topTables, signatureSize=signatureSize))
+}
+
+tissueContrasts <- c(
+  # The following contrasts are to identify model/disease signatures for each time
+  # point. For days 7 and 14 there is no compound treatment (similar to vehicle).
+  # We also have contrasts are to determine the effects of ALK5 inhibition.
+  "Day7 BLM vs PBS"="BLM_._7 - PBS_._7",
+  "Day14 BLM vs PBS"="BLM_._14 - PBS_._14", 
+  "Day21 BLM vs PBS"="BLM_Veh_21 - PBS_Veh_21",
+  "Day21 BLM Alk5i vs Vehicle"="BLM_SB525334_21 - BLM_Veh_21",
+  "Day28 BLM vs PBS"="BLM_Veh_28 - PBS_Veh_28",
+  "Day28 BLM Alk5i vs Vehicle"="BLM_SB525334_28 - BLM_Veh_28",
+  "Day42 BLM vs PBS"="BLM_Veh_42 - PBS_Veh_42")
+
+lungContrasts <- sclerodermaContrasts(tissueContrasts, "lung", datLung, presentLung)
+datLung <- lungContrasts$dat
+
+skinContrasts <- sclerodermaContrasts(tissueContrasts, "skin", datSkin, presentSkin)
+datSkin <- skinContrasts$dat
+
+# Merge both tables
+deGenes <- bind_rows(lungContrasts$topTables, skinContrasts$topTables) %>%
+  # Rearrange column order
+  select(contrast, tissue, everything())
+
+write.csv(deGenes, file="all_timepoints_and_tissues.csv", row.names=FALSE)
+```
+
+Before continuing, we examine the p-value distributions for our set of contrasts. If we accept the null hypothesis that *no change occurs after bleomycin exposure*, then we would expect to see a flat uniform distribution. If we reject the null hypothesis, we expect to see a peak of p-values near 0. Any other distribution shapes suggest there are issues with out modeling of the data for differential expression detection.
+
+```{r, p_value_distributions, fig.width=18, fig.height=12}
+forPlotting <- deGenes %>%
+  mutate(contrast=factor(str_extract(contrast, "Day.+"), levels=names(tissueContrasts)))
+
+ggplot(forPlotting, aes(x=P.Value, fill=tissue)) +
+  facet_grid(contrast ~ tissue) +
+  geom_histogram(bins=30) +
+  guides(fill=FALSE)
+```
+
+Our p-value distributions suggest that our model was constructed appropriately and that we reject the null hypothesis in each contrast (ie. there is a model signature).
+
+The number of differentially-expressed genes appears to be higher in skin than in lung. However, this number also drops to much fewer genes by 42 days, suggesting that fibrotic resolution in the model may be greater in skin than in the lung. We note that the signature sizes are almost the same at day 28.
+
+```{r, compare_logfc, warning=FALSE, eval=FALSE}
+ggplot(forPlotting, aes(x=as.factor(contrast), y=logFC)) +
+  geom_boxplot(aes(group=paste(contrast, tissue)), fill=NA, outlier.shape=NA,
+               width=0.5, position=position_dodge(0.9)) +
+  geom_point(aes(color=tissue), alpha=0.01, 
+             position=position_jitterdodge(jitter.width=0.2, dodge.width=0.9)) +
+  scale_y_continuous(limits=quantile(forPlotting$logFC, c(0.001, 0.999))) +
+  labs(x="contrast", title=paste("Distribution of logFC")) +
+  # Turn off the very low alpha channel used above from being in the legend
+  guides(color=guide_legend(override.aes=list(alpha=1))) +
+  theme(axis.text.x=element_text(angle=10, hjust=1))
+```
+
+In the plot above, we show the log fold change for all genes in each contrast. For visualization purposes, we hide the extreme values (masking the highest and lowest 0.1%). The magnitude of the change in expression (from BLM to PBS), measured as $log_2FoldChange$, for each timepoint appears to be approximately the same.
+
+```{r, getGeneNames, warning=FALSE}
+
+allGeneNames <- deGenes %>% select(gene_id) %>% unique()
+library(biomaRt)
+
+ensembl <- useMart("ensembl", dataset="mmusculus_gene_ensembl")
+genenames <- getBM(attributes=c('ensembl_gene_id',
+                          'external_gene_name'),
+             filters = 'ensembl_gene_id',
+             values = allGeneNames,
+             mart = ensembl)
+
+unloadNamespace("biomaRt") # biomaRt pollutes the tidyR namespace...
+deGenes <- left_join(deGenes, genenames, by = c("gene_id" = "ensembl_gene_id"))
+rm(genenames, allGeneNames)
+```
+
+```{r, volcanoPlots}
+
+vplots <- deGenes %>%
+  mutate(contrast=factor(str_extract(contrast, "Day.+"), 
+                         levels=names(tissueContrasts))) %>%
+  filter(contrast != "Day21 BLM Alk5i vs Vehicle" &
+                                contrast != "Day28 BLM Alk5i vs Vehicle" ) %>%
+  select(gene_id, external_gene_name, contrast, tissue, logFC, P.Value, adj.P.Val) %>%
+  mutate(SigInSkin = ifelse(tissue == "skin" & abs(logFC)>3 & adj.P.Val<0.1, "Yes","No"))
+
+highInSkinList <- vplots %>% filter(SigInSkin == "Yes") %>% select(gene_id) %>% unique()
+
+vplots <- vplots %>%
+  mutate(SigInSkin = ifelse(tissue == "lung" & 
+                              gene_id %in% highInSkinList$gene_id, "Yes", SigInSkin)) %>%
+  mutate(SigInBoth = ifelse(tissue == "lung" & 
+                              adj.P.Val<0.1 & 
+                              abs(logFC)>3 & 
+                              gene_id %in% highInSkinList$gene_id, "Yes","No"))
+
+ggplot(vplots, aes(x=logFC, y = -log10(P.Value),color=SigInSkin)) +
+  geom_point(alpha=0.3) +
+  geom_vline(xintercept=3, linetype="dashed", color = "red") +
+  geom_vline(xintercept=-3, linetype="dashed", color = "red") +
+  facet_grid(contrast~tissue) +
+  theme_bw()
+
+vplots <- vplots %>% filter(contrast=="Day14 BLM vs PBS")
+
+ggplot(vplots, aes(x=logFC, y = -log10(P.Value),color=SigInSkin)) +
+  geom_point(alpha=0.3) +
+  geom_label_repel(aes(label = ifelse(SigInBoth=="Yes", external_gene_name,"")),
+                  box.padding   = 0.35, 
+                  point.padding = 0.5,
+                  segment.color = 'grey50') +
+  geom_vline(xintercept=3, linetype="dashed", color = "red") +
+  geom_vline(xintercept=-3, linetype="dashed", color = "red") +
+  facet_wrap(~tissue) +
+  theme_bw()
+
+vplots <- deGenes %>%
+  mutate(contrast=factor(str_extract(contrast, "Day.+"), 
+                         levels=names(tissueContrasts))) %>%
+  filter(contrast == "Day21 BLM Alk5i vs Vehicle" |
+                                contrast == "Day28 BLM Alk5i vs Vehicle" ) %>%
+  select(contrast, tissue, logFC, P.Value)
+
+ggplot(vplots, aes(x=logFC, y = -log10(P.Value))) +
+  geom_point(alpha=0.3) +
+  facet_grid(contrast~tissue) +
+  theme_bw()
+
+remove(vplots)
+
+```
+
+```{r, compare_tissue_timepoint_signatures}
+forPlottingSum <- bind_rows(lungContrasts$signatureSize, skinContrasts$signatureSize) %>%
+  mutate(contrast=factor(str_extract(contrast, "Day.+"), levels=names(tissueContrasts)),
+         compound=ifelse(str_detect(contrast, "Alk5i"), "SB525334", "No PO Treatment"))
+
+ggplot(forPlottingSum, aes(x=contrast, y=num_genes, fill=tissue)) +
+  facet_wrap(~ compound, scales="free_x") +
+  geom_bar(stat="identity", position="dodge") +
+  geom_text(aes(label=num_genes, y=num_genes + 200), size=3,
+            position=position_dodge(width=0.9)) +
+  labs(x="", y=paste0("# DE genes (FDR < ", FDR_THRESHOLD, ")")) +
+  theme_bw() +
+  theme(axis.text.x=element_text(angle=10, hjust=1))
+```
+
+```{r, alk5Analysis}
+
+Lung_Day21 <- deGenes %>%
+  filter(contrast == "Bleo_lung_Day21 BLM Alk5i vs Vehicle" & adj.P.Val<0.1) %>%
+  select(gene_id) %>%
+  mutate(Lung_Day21="1")
+Lung_Day28 <- deGenes %>%
+  filter(contrast == "Bleo_lung_Day28 BLM Alk5i vs Vehicle" & adj.P.Val<0.1) %>%
+  select(gene_id) %>%
+  mutate(Lung_Day28="1")
+Skin_Day21 <- deGenes %>%
+  filter(contrast == "Bleo_skin_Day21 BLM Alk5i vs Vehicle" & adj.P.Val<0.1) %>%
+  select(gene_id) %>%
+  mutate(Skin_Day21="1")
+Skin_Day28 <- deGenes %>%
+  filter(contrast == "Bleo_skin_Day28 BLM Alk5i vs Vehicle" & adj.P.Val<0.1) %>%
+  select(gene_id) %>%
+  mutate(Skin_Day28="1")
+
+lung_upset <- full_join(Lung_Day21, Lung_Day28)
+skin_upset <- full_join(Skin_Day21, Skin_Day28)
+alk5_upset <- full_join(lung_upset, skin_upset) %>%
+  mutate_all(~replace(., is.na(.), 0))
+
+alk5_upset$Lung_Day21 <- as.numeric(alk5_upset$Lung_Day21)
+alk5_upset$Lung_Day28 <- as.numeric(alk5_upset$Lung_Day28)
+alk5_upset$Skin_Day21 <- as.numeric(alk5_upset$Skin_Day21)
+alk5_upset$Skin_Day28 <- as.numeric(alk5_upset$Skin_Day28)
+
+UpSetR::upset(as.data.frame(alk5_upset), order.by = "freq")
+
+rm(lung_upset, skin_upset, alk5_upset, Skin_Day21, Skin_Day28, Lung_Day21, Lung_Day28)
+```
+
+```{r, timeCourseAnalysis}
+# remove alk5i contrasts
+tcseq_raw <- forPlotting %>% filter(contrast != "Day21 BLM Alk5i vs Vehicle" &
+                                contrast != "Day28 BLM Alk5i vs Vehicle" )
+
+# Separate lung and skin tcseq runs
+lung_tcseq <- tcseq_raw %>%
+  filter(tissue == "lung")
+
+lung_de_genelist <- lung_tcseq %>%
+  filter(adj.P.Val < 0.1) %>%
+  select(gene_id) %>%
+  unique()
+
+lung_tcseq <- lung_tcseq %>%
+  filter(gene_id %in% lung_de_genelist$gene_id) %>%
+  select(gene_id, contrast, logFC) %>% 
+  spread(contrast, logFC) %>% 
+  remove_rownames() %>% 
+  column_to_rownames(var="gene_id")
+lung_tcseq <- as.matrix(lung_tcseq)
+colnames(lung_tcseq) <- c("7", "14", "21", "28", "42")
+tca_lung <- timeclust(lung_tcseq, algo = "cm", k = 4, standardize = TRUE)
+p <- timeclustplot(tca_lung, value = "z-score(logFC)",cols=4, categories = "Time (days)",
+                   title.size=14, axis.title.size = 12, 
+                   axis.text.size = 8, legend.title.size = 12, legend.text.size = 8)
+
+lung_memberships <- as.data.frame(tca_lung@membership) %>% 
+  rownames_to_column() %>%
+  gather(`1`:`4`, key = "Cluster", value = "Probability") %>%
+  group_by(rowname) %>% 
+  filter(rank(-Probability) == 1) %>%
+  ungroup()
+
+# Separate lung and skin tcseq runs
+skin_tcseq <- tcseq_raw %>%
+  filter(tissue == "skin")
+
+skin_de_genelist <- skin_tcseq %>%
+  filter(adj.P.Val < 0.1) %>%
+  select(gene_id) %>%
+  unique()
+
+skin_tcseq <- skin_tcseq %>%
+  filter(gene_id %in% skin_de_genelist$gene_id) %>%
+  select(gene_id, contrast, logFC) %>% 
+  spread(contrast, logFC) %>% 
+  remove_rownames() %>% 
+  column_to_rownames(var="gene_id")
+skin_tcseq <- as.matrix(skin_tcseq)
+colnames(skin_tcseq) <- c("7", "14", "21", "28", "42")
+tca_skin <- timeclust(skin_tcseq, algo = "cm", k = 4, standardize = TRUE)
+q <- timeclustplot(tca_skin, value = "z-score(logFC)",cols=1, categories = "Time (days)",
+                   title.size=14, axis.title.size = 12, 
+                   axis.text.size = 8, legend.title.size = 12, legend.text.size = 8)
+
+skin_memberships <- as.data.frame(tca_skin@membership) %>% 
+  rownames_to_column() %>%
+  gather(`1`:`4`, key = "Cluster", value = "Probability") %>%
+  group_by(rowname) %>% 
+  filter(rank(-Probability) == 1) %>%
+  ungroup()
+
+# Cluster membership probabilities -- cutoff at 50% for "high confidence" members
+lung_memberships$Tissue <- "Lung"
+skin_memberships$Tissue <- "Skin"
+cluster_memberships <- rbind(lung_memberships, skin_memberships)
+
+ggplot(cluster_memberships, 
+       aes(x=Probability)) + 
+  geom_histogram(bins = 100) + 
+  facet_grid(Cluster~Tissue)
+
+rm(skin_memberships, lung_memberships, cluster_memberships)
+
+```
+
+```{r, clusterMatching}
+
+lung_upset <- lung_memberships %>%
+  filter(Probability > 0.5) %>% # High confidence memberships
+  select(gene = rowname, Cluster) %>%
+  mutate(Cluster = paste("Lung", Cluster, sep = "")) %>%
+  spread(Cluster, Cluster)
+lung_upset[-1] <- data.frame(ifelse(is.na(lung_upset[-1]),0,1))
+
+skin_upset <- skin_memberships %>%
+  filter(Probability > 0.5) %>% # High confidence memberships
+  select(gene = rowname, Cluster) %>%
+  mutate(Cluster = paste("Skin", Cluster, sep = "")) %>%
+  spread(Cluster, Cluster)
+skin_upset[-1] <- data.frame(ifelse(is.na(skin_upset[-1]),0,1))
+
+# 6997 genes differentially expressed in both skin and lung in at least one timepoint
+upset <- left_join(skin_upset, lung_upset) %>%
+  na.omit()
+
+UpSetR::upset(as.data.frame(upset), nsets = 40, order.by = "freq")
+
+```
+
+```{r, clusterOntology, eval=FALSE}
+# Fisher's exact ontology analysis of cluster genes
+# Due to an issue with the CP collection in the MSigDB XML, we create it 
+# manually by combining CP, CP:KEGG, CP:BIOCARTA, CP:REACTOME. We extract the
+# GeneSets from each GeneSetCollection and put them back together.
+cp <- getMSigDBCollection("CP")
+kegg <- getMSigDBCollection("CP:KEGG")
+biocarta <- getMSigDBCollection("CP:BIOCARTA")
+reactome <- getMSigDBCollection("CP:REACTOME")
+cp <- GeneSetCollection(c(unlist(unlist(cp)), unlist(unlist(kegg)),
+                          unlist(unlist(biocarta)), unlist(unlist(reactome))))
+
+# Clusters of genes with shared expression patterns
+oneone <- upset %>%
+  filter(Skin1 == 1 & Lung1 == 1) %>%
+  select(gene)
+
+test<- runFisherExact("mouse", cp, oneone$gene, unique(deGenes$gene_id))
+
+```
+
+## Gene Set Enrichment
+
+Next we examine the gene sets that are differentially-regulated in each expression contrast.
+
+For this analysis, we use the **Molecular Signatures Database (MSigDB)** [@liberzon2015the-molecular]. This database of gene sets contains multiple collections (more information at http://software.broadinstitute.org/gsea/msigdb/collections.jsp). Specifically, we will use the **canonical pathways** collection.
+
+Most *competitive gene set tests* assume independence of genes, because they evaluate P-values by permutation of gene labels, or because they rely on parametric approximations that are asymptotically equivalent to gene permutation. We compute gene set enrichments using **CAMERA**, a competitive gene set test procedure that adjusts for inter-gene correlation [@wu2012camera]. This is critical, as studies have shown that competitive gene set tests are sensitive to inter-gene correlations, and even quite modest correlations can dangerously inflate the apparent false discovery rate.
+
+We use CAMERA to identify molecular signatures defined by MSigDB collections for each of our contrasts. If more than 25 gene sets are enriched, we only show the top `r TOP_N_GENE_SETS` by adjusted P-value. All pathways are output in accomanying files.
+
+\blandscape
+
+```{r, pathway_enrichment, results="asis", warning=FALSE}
+# Use 'results="asis"' above to render the cat() in the knitr document.
+
+# Due to an issue with the CP collection in the MSigDB XML, we create it 
+# manually by combining CP, CP:KEGG, CP:BIOCARTA, CP:REACTOME. We extract the
+# GeneSets from each GeneSetCollection and put them back together.
+cp <- getMSigDBCollection("CP")
+kegg <- getMSigDBCollection("CP:KEGG")
+biocarta <- getMSigDBCollection("CP:BIOCARTA")
+reactome <- getMSigDBCollection("CP:REACTOME")
+cp <- GeneSetCollection(c(unlist(unlist(cp)), unlist(unlist(kegg)),
+                          unlist(unlist(biocarta)), unlist(unlist(reactome))))
+
+for (currentTissue in c("lung", "skin")) {
+  currentDat <- datLung
+  if (currentTissue == "skin") currentDat <- datSkin
+  fit <- getItem(currentDat, "limma_design_fit_cf")
+  
+  for (i in seq_len(length(tissueContrasts))) {
+    currentContrast <- names(tissueContrasts)[i]
+    cat(paste("\\newpage \n\n### *Contrast", currentContrast, "in", currentTissue, "* \n\n"))
+    
+    tryCatch({
+      gse <- runGSEA("mouse", cp, fit = fit, fitCoef = i, gseSigLevel = 0.05)
+
+      if (nrow(filter(gse$enriched, padj < 0.1)) > 0) {
+        pdf(file=paste(currentContrast, currentTissue, "_GSE.pdf"), width = 4,height=4)
+        plot(
+          geneSetEnrichmentPlot(gse$setDetails, 0.1, topGeneSets=TOP_N_GENE_SETS)
+        )
+        dev.off()
+      } else {
+        cat("\n\n**No enriched gene sets found.** \n\n")
+      }
+      
+      # Output the gene set enrichment results to CSV files
+      gse$enriched <- gse$enriched %>%
+        select(-leadingEdge)
+      
+      write.csv(gse$enriched, 
+                paste("day", currentContrast, currentTissue, "gene_set_enrichment.csv", sep="_"),
+                row.names=FALSE)
+    }, error=function(e) {
+      cat("\n\n**Unable to process enrichment.** \n\n")
+    })
+  }
+}
+
+# Output all gene IDs for each pathway alongside symbols and descriptions
+cpDF <- data.frame()
+cpList <- geneIds(cp)
+for (set in sort(names(cpList))) {
+  cpDF <- bind_rows(cpDF, data.frame(set, entrez=as.integer(cpList[[set]])))
+}
+cpDF <- left_join(cpDF, select(grch38, entrez, symbol, description), by="entrez")
+
+write.csv(cpDF, "msigdb_curated_pathway_genes.csv", row.names=FALSE)
+
+rm(currentTimepoint, currentTissue, currentDat, fit, currentContrast, gse)  # clear namespace
+
+```
+
+\elandscape
+
+
+# References
+
+<!-- From https://stackoverflow.com/questions/41532707/include-rmd-appendix-after-references
+ div tells Pandoc to include the refs here, rather than at the end of the document. -->
+ 
+<div id="refs"></div>
+
+------
+
+\newpage
+
+# System Information
+
+***Time required to process this report:*** *`r format(Sys.time() - startTime)`*
+
+***R session information:***
+
+```{r, echo_session_info}
+sessionInfo()
+```
+
+```{r, domino, results="asis"}
+if (Sys.getenv("DOMINO_WORKING_DIR") != "") {
+  cat(paste("\n\n## Domino environment details",
+            paste("**Domino User:**", Sys.getenv("DOMINO_PROJECT_OWNER")),
+            paste("**Domino Project:**", Sys.getenv("DOMINO_PROJECT_NAME")),
+            paste("**Domino Run ID:**", Sys.getenv("DOMINO_RUN_ID")),
+            paste("**Domino Run #:**", Sys.getenv("DOMINO_RUN_NUMBER")),
+            sep="\n\n"))
+}
+```

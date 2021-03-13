@@ -1,0 +1,70 @@
+---
+bibliography:
+- ../resources/references/pubmed_export_with_cite_key_reformatted.bib
+- ../resources/references/r_citations.bib
+- ../resources/references/google_scholar_library.bib
+- ../resources/references/ltrc_manually_edited.bib
+- ../resources/references/online_resources.bib
+csl: ../resources/references/plos.csl
+output:
+  word_document: default
+header-includes:
+- \usepackage{fancyhdr}
+- \usepackage{lastpage}
+- \usepackage{pdflscape}
+- \pagestyle{fancy}
+- \fancyhead{}
+- \fancyfoot[C]{\thepage\ of \pageref{LastPage}}
+- \newcommand{\blandscape}{\begin{landscape}}
+- \newcommand{\elandscape}{\end{landscape}}
+# The following section adds line numbers to the output ------------------------
+- \usepackage{lineno}
+- \linenumbers
+#-------------------------------------------------------------------------------
+- \linespread{2.0}  # double-spacing
+# The following code hides the automatically-generated figure captions
+- \usepackage{caption}
+- \captionsetup[figure]{labelformat=empty}
+---
+
+```{r, knitr_global_options, echo=FALSE}
+knitr::opts_chunk$set(echo=FALSE)
+```
+
+```{r, convenience_settings, message=FALSE}
+options(stringsAsFactors=FALSE)
+
+library(printr)
+
+if (interactive()) {
+  # When in RStudio, dynamically sets working directory to path of this script
+  setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+}
+```
+
+# Methods
+
+## Model construction and optimization
+
+IC was modeled as a continuous response by fitting a linear regression model to the RNA-Seq expression data, computed with an elastic net regularization path. We modeled lung and skin tissues separately yielding two models of IC, $\mathcal{M}_{lung}$ and $\mathcal{M}_{skin}$. Linear regression can be unreliable when $p > n$ (relatively few samples with many transcript observations). By linearly combining both $l_1$ and $l_2$ penalties of the lasso and ridge regression methods, respectively, *elastic net* regularization improves model performance [@zou2005regularization; @glmnet1; @glmnet-vignette; @james2013introduction].
+
+Elastic net training requires the selection of both a lasso and ridge mixing parameter, $\alpha$, and a penalty strength parameter, $\lambda$. To identify the optimal combination with the highest performance, we conducted 10-fold balanced cross-validation for each $\alpha, \lambda$ pair in a grid search on eacg training set. We chose $\alpha = 0.95$ based on the suggestion in the `glmnet` documentation to set $\alpha = 1 - \epsilon$ for some small $\epsilon > 0$ [@glmnet-vignette]. The rationale is to improve numerical stability and reduce the degeneracies cause by high correlations between covariates.
+
+We performed 100 repeats of 10-fold cross-validation in `caret` to select the $\lambda$ that yielded the highest performing final model (with the lowest mean-squared error) [@caret].
+
+# Results
+
+## Modeling lung function with tissue transcriptional profiles
+
+Of the measurements available for mouse lung function, *inspiratory capacity* (IC) is considered to be the most analogous to *forced vital capacity* (FVC). In general, we observed that IC was higher for PBS-treated mice than for bleomycin-treated mice.
+
+Trained on the lung and skin transcriptional data, we constructed models of IC (see Methods) in order to determine if lung or skin biopsies could function as surrogate biomarkers of lung function. Due to limited availability of validation data sets, we used repeated cross-validated performance to assess the models. 
+
+We observed that $\mathcal{M}_{lung}$ and $\mathcal{M}_{skin}$ models were equally informative for predicting IC ($median(R^2_{lung}) \approx 0.8$ and $median(R^2_{skin}) \approx 0.8$; see Figure 4). While our sample numbers were limited, these results are encouraging and suggest that RNA-Seq from lung or skin could serve as a biomarker of lung function.
+
+# References
+
+<!-- From https://stackoverflow.com/questions/41532707/include-rmd-appendix-after-references
+ This tells Pandoc to include the refs here, rather than at the end of the document. -->
+ 
+<div id="refs"></div>

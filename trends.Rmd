@@ -1,0 +1,298 @@
+---
+title: "Analysis of a systemic bleomycin model of scleroderma: Trends"
+author: "[Ron Ammar](mailto:ron.ammar@bms.com)"
+date: '`r format(Sys.time(), "%A, %B %e, %Y")`'
+header-includes:
+- \usepackage{fancyhdr}
+- \usepackage{lastpage}
+- \usepackage{pdflscape}
+- \usepackage{titling}
+- \pagestyle{fancy}
+- \fancyhead[LE,RO]{}
+- \rhead{\includegraphics[width=3.5cm]{bms_logo.jpg}}
+- \fancyfoot[C]{\textit{BMS Confidential}}
+- \fancyfoot[LE,RO]{\thepage\ of \pageref{LastPage}}
+- \newcommand{\blandscape}{\begin{landscape}}
+- \newcommand{\elandscape}{\end{landscape}}
+- \pretitle{\begin{center}\LARGE\includegraphics[width=12cm]{bms_logo.jpg}\\[\bigskipamount]}
+- \posttitle{\end{center}}
+bibliography:
+- ../../resources/references/google_scholar_library.bib
+- ../../resources/references/online_resources.bib
+- ../../resources/references/pubmed_export_with_cite_key_reformatted.bib
+- ../../resources/references/r_citations.bib
+- ../../resources/references/biorxiv_library.bib
+- ../../resources/references/manually_edited_library.bib
+csl: ../../resources/references/elsevier-harvard2.csl
+output: 
+  pdf_document:
+    toc: true
+    toc_depth: 4  # default is depth of 3
+    number_sections: true
+---
+
+```{r, echo=FALSE}
+# Clear the current session, to avoid errors from persisting data structures
+# NOTE: when using parameterized RMarkdown, we cannot remove the params declared
+# in the YAML header.
+rm(list=setdiff(ls(), "params"))
+# Free up memory by forcing garbage collection
+invisible(gc())
+# Pretty printing in knitr
+library(printr)
+# Manually set the seed to an arbitrary number for consistency in reports
+set.seed(1234, kind="Mersenne-Twister", normal.kind="Inversion")
+# Do not convert character vectors to factors unless explicitly indicated
+options(stringsAsFactors=FALSE)
+
+startTime <- Sys.time()
+```
+
+```{r global_options, include=FALSE}
+# use include=FALSE to have the chunk evaluated, but neither the code nor its output displayed.
+knitr::opts_chunk$set(echo=FALSE, message=FALSE, fig.align="center",
+                      fig.width=12, fig.height=8,
+                      fig.path='figs/', 
+                      dpi=150,  # knitr default is 72
+                      dev=c('pdf', 'png')) # output figures as both pdf and png
+```
+
+```{r, load_libraries_setwd}
+library(Biobase)
+library(doParallel)
+library(ggplot2)
+library(Rtsne)
+library(tidyr)
+library(variancePartition)
+library(dplyr)  # attach dplyr environment last so it's first in search path
+
+if ("rstudioapi" %in% installed.packages()[, "Package"] & rstudioapi::isAvailable() & interactive()) {
+  # When in RStudio, dynamically sets working directory to path of this script
+  setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+  # Set the default ggplot theme to "theme_bw" with default font size
+  theme_set(theme_bw())
+} else {
+  # Set the default ggplot theme to "theme_bw" with specified base font size
+  theme_set(theme_bw(20))
+}
+
+# Check if stash is mounted
+if (length(list.files("/stash", all.files=TRUE, include.dirs=TRUE, no..=TRUE)) == 0) {
+  warning("/stash is not mounted")
+}
+
+# Constants
+NUM_CORES <- detectCores(logical=FALSE) - 1  # Use all but one *physical* cores
+RIN_THRESHOLD <- 5.5  # figure 6 of Schroeder et al (2006)
+
+# Parallelization
+cl <- makeCluster(NUM_CORES)
+registerDoParallel(cl)
+```
+
+\newpage
+
+# Background
+
+Systemic sclerosis (SSc, the systemic form of scleroderma) is a chronic progressive disease characterized by three main features:  vascular injury, immunological abnormalities, and fibrosis of the skin and various internal organs. Fibrosis is the hallmark feature of SSc and is responsible for a majority of the morbidity and mortality associated with this disease. SSc patients with significant internal organ involvement have a 10-year survivial rate of only 38% (Korman B et al. Curr Rheumatol Rep (2015) 17:21). The mechanism underlying the development of fibrosis remains unclear, and currently there are no effective therapies for this disease.
+
+A well-characterized mouse model of SSc involves daily subcutaneous injections of the antitumor antibiotic bleomycin (BLM), which leads to localized dermal fibrosis as well as pulmonary fibrosis. In-house, we have termed this the “Systemic Bleomycin Model” to distinguish it from the already-established Intratracheal (IT) Model. Our lab plans to utilize this model, which mimics several key features of human SSc, to examine the pathological mechanisms underlying the development and progression of fibrosis in SSc. We have just established this model, and we have conducted preliminary analyses to characterize the model. As part of this characterization – and in an effort to achieve the objectives listed below – the current project aims to conduct a thorough transcriptomics analysis of skin and lung samples from these mice.
+
+It is well established that the TGF-$\beta$ signaling pathway is required for bleomycin-induced fibrosis in this model. Thus, in the present study we used the ALK5 (TGF-$\beta$ receptor I) inhibitor SB525334 to determine whether we could cause regression of dermal and pulmonary fibrosis by inhibiting TGF-$\beta$ signaling.
+
+# Purpose
+
+The objectives of this study are to:
+
+1. Characterize the development of dermal and pulmonary fibrosis in the systemic bleomycin mouse model.
+1. Compare & contrast lung and skin signatures to determine if a skin biopsy could function as a surrogate for a lung-based diagnostics (eg. CT scan).
+1. Characterize the (potential) resolution of dermal and pulmonary fibrosis in the systemic bleomycin mouse model.
+1. Identify potential therapeutic targets in SSc.
+1. Achieve better understanding the effects of the ALK5 inhibitor SB525334 in the lungs and skin.
+
+# Experimental Design
+
+![](../../resources/experimental_design.png)
+![](../../resources/group_and_animal_numbers.png)
+
+Female C57BL/6 mice (~12 weeks old) were used for this study. An electric shaver was used to shave the interscapular region on the back of each mouse, and a non-toxic permanent marker was used to draw two small circles on the skin within the shaved area on each mouse. Fibrosis was induced by daily subcutaneous injections of either bleomycin (10mg/kg/day; 100µl per injection site of 1mg/ml solution for these ~20gm mice) or PBS (vehicle control) within the marked interscapular regions. Injections began on Day 0 and were done five times per week for two weeks, using a 27-gauge needle. (Bhattacharyya S. et al., Sci Transl Med 2014 Apr 16;6(232):232ra50; Huang J. et al., Ann Rheum Dis 2015 Apr 9. pii: annrheumdis-2014-207109).
+
+Beginning on Day 12, the ALK5 inhibitor SB525334 (30mpk) or vehicle was delivered (PO, BID dosing). Note that Groups 1-2 and Groups 3-4 were sacrificed on Day 7 and Day 14, respectively, and thus did not receive oral dosing. Groups 5-7 were sacrificed on Day 21. The last oral doses were administered on Day 27. Groups 8-10 were sacrificed on Day 28. Groups 11-12 (which specifically serve to assess resolution in this model, and do not examine the effect of SB525334) were sacrificed on Day 42.
+
+Please see original design PowerPoint deck for additional information on groups (12 groups, n = 8-10 per group at onset of study; a total of seven animals died during the study).
+
+# Analysis
+
+```{r, load_data, results="hide"}
+source("../../resources/load_data.R", chdir=TRUE)
+```
+
+There are `r nrow(doe)` samples which are divided into the following tissues, treatments and time points (measured in days).
+
+```{r}
+as.data.frame(count(doe, Tissue, Treatment, Compound, Timepoint))
+```
+
+Using a zFPKM threshold of `r ZFPKM_THRESHOLD`, `r length(present)` of `r nrow(filter(annotation, Source == "protein_coding"))` protein-coding genes are determined to be actively expressed in these samples [@hart2013finding]. In lung `r length(presentLung)` are present and in skin `r length(presentSkin)` are present.
+
+
+## t-Distributed Stochastic Neighbor Embedding (t-SNE)
+
+We compare samples to one another in an unbiased manner with t-Distributed Stochastic Neighbor Embedding (t-SNE), a nonlinear dimensionality reduction method capable of reducing all measurements into just two (or three) dimensions for visualization [@maaten2008visualizing; @wattenberg2016how]. t-SNE is particularly useful because it finds lower dimensional embeddings of data points while minimizing distortions in distances between neighboring data points.
+
+\blandscape
+
+```{r, tsne, warning=FALSE}
+# For parameter setting, see FAQ here https://lvdmaaten.github.io/tsne/
+# van der Maaten suggests "a larger / denser dataset requires a larger perplexity"
+# Perplexity values in the range 5 - 50, suggested by van der Maaten & Hinton
+# NOTE: Rtsne function optionally does an initial reduction of the feature space
+# using prcomp (a PCA), before calling the C++ t-SNE implementation. This is
+# omitted below so that t-SNE can work with the whole dataset and not just the
+# dimensionally-reduced data.
+for (p in 50:5) {
+  # Inspired by "Ignore errors with try" section from Advanced R (http://adv-r.had.co.nz/Exceptions-Debugging.html)
+  successOrFailure <- try({
+    tsneOut <- Rtsne(t(logCPM), perplexity=p, check_duplicates=FALSE, 
+                       pca=FALSE, max_iter=2000, verbose=interactive())
+  }, silent=TRUE)
+  
+  if (class(successOrFailure) != "try-error") {
+    if (interactive ()) print(paste("t-SNE perplexity = ", p))
+    break
+  }
+}
+
+forPlotting <- data.frame(tsneOut$Y, ObservationID=rownames(t(logCPM))) %>%
+  left_join(doe, by="ObservationID") %>%
+  mutate(Compound=ifelse(Compound == ".", "None", Compound))
+
+ggplot(forPlotting, aes(x=X1, y=X2, col=Tissue, shape=Treatment,
+                        size=as.factor(Timepoint))) +
+  geom_point(alpha=0.5) +
+  labs(x="t-SNE1", y="t-SNE2", size="Days", shape="Treatment (SC)") +
+  theme(axis.text=element_blank(), axis.ticks=element_blank())
+
+ggplot(forPlotting, aes(x=X1, y=X2, col=Compound, shape=Treatment,
+                        size=as.factor(Timepoint))) +
+  geom_point(alpha=0.5) +
+  labs(x="t-SNE1", y="t-SNE2", size="Days", shape="Treatment (SC)", color="Treatment (PO)") +
+  theme(axis.text=element_blank(), axis.ticks=element_blank())
+```
+
+\elandscape
+
+## Batch correction
+
+Our `r nrow(doe)` samples are distributed across `r length(unique(doe$Plate))` plates:
+
+`r count(doe, Plate, Tissue, Treatment)`
+
+Since plate is not confounded with either tissue or treatment, we correct for the effects of plate on the entire data set using an empirical Bayes framework [@johnson2007adjusting; @sva].
+
+
+## variancePartition Analysis
+
+We use a direct measure of variance by determining which covariates contribute the greatest proportion of variance to the data using *variancePartition*. This analysis provides a general statistical and visualization framework for studying the drivers of variation in data [@hoffman2016variancepartition]. variancePartition summarizes the contribution of each variable in terms of the **fraction of variation explained (FVE)**.
+
+While the concept of FVE is widely applied to univariate regression by reporting the $R^2$ value from a simple linear model, variancePartition extends FVE to applications with complex study designs with multiple variables of interest. The linear mixed model framework of variancePartition allows multiple dimensions of variation to be considered jointly in a single model and accommodates discrete variables with a large number of categories.
+
+<!--
+From the variancePartition tutorial: http://bioconductor.org/packages/release/bioc/vignettes/variancePartition/inst/doc/variancePartition.pdf
+
+Should a variable be modeled as fixed or random effect?
+
+Categorical variables should (almost) always be modeled as a random effect. The difference between modeling a categorical variable as a fixed versus random effect is minimal when the sample size is large compared to the number of categories (i.e. levels). So variables like disease status, sex or time point will not be sensitive to modeling as a fixed versus random effect. However, variables with many categories like Individual must be modeled as a random effect in order to obtain statistically valid results. So to be on the safe side, categorical variable should be modeled as a random effect.
+variancePartition fits two types of models:
+
+1) linear mixed model where all categorical variables are modeled as random effects and all continuous variables are fixed effects. The function lmer from lme4 is used to fit this model.
+
+2) fixed effects model, where all variables are modeled as fixed effects. The function lm is used to fit this model.
+-->
+
+```{r, varpar}
+# We assess which variables should be included/excluded based on collinearity.
+# For more information, see section 3.2.1 in variancePartition tutorial
+form <- ~ Tissue + Treatment + Timepoint + Compound + RIN.number + Plate + cage_number
+plotCorrMatrix(canCorPairs(form, doe))
+```
+
+In this study, the mice are not caged individually, and sharing a cage can be a contributing factor to the observed variance. However, cage is confounded with time point, bleomycin treatment and compound treatment (eg. all mice in a specific cage receive a particular compound treatment on a specific day), so we cannot include it in our differential expression models.
+
+```{r, varpar_2}
+# Specify variables to consider.
+# Model continuous variables as fixed effects and categorical variables as 
+# random effects. Note the syntax used to specify random effects
+# eg. form <- ~ Age + (1|Individual) + (1|Tissue) + (1|Batch)
+# NOTE: to include random effects interactions, syntax is 
+# eg. we write "(1|treatment) + (1|phase) + (1|treatment:phase)", and not 
+# "(1|treatment*phase) + (1|treatment:phase)"
+form <- ~ (1|Tissue) + (1|Treatment) + Timepoint + (1|Compound) + RIN.number + (1|Plate)
+
+out <- capture.output(  # Hide the varPar time estimates
+  # Subset intensities and DOE to match
+  varPartPlate <- fitExtractVarPartModel(logCPM[, doe$ObservationID], form, doe, useWeights=FALSE)
+)
+
+# Sort variables (i.e. columns) by median fraction # of variance explained before
+# violin plot of contribution of each variable to total variance
+plotVarPart(sortCols(varPartPlate), main="Variance Partition analysis")
+
+# After batch correction
+out <- capture.output(
+  varPartCorrected <- fitExtractVarPartModel(logCPMCorrected[, doe$ObservationID], form, doe, useWeights=FALSE)
+)
+plotVarPart(sortCols(varPartCorrected), main="Variance Partition analysis, after plate correction")
+```
+
+First, we confirm that batch correction has removed any variance explained by plate. In our linear models, instead of applying batch correction, we will account for plate in the model.
+
+The greatest contribution to variance comes from the source tissue (lung or skin), followed by the treatment (bleomycin or PBS vehicle), with other factors contributing less variance to gene expression. The residual corresponds to the proportion of variance unaccounted for by known parameters.
+
+Given that we are primarily interested in the treatment effect, and the greatest source of variance is tissue, we choose to process lung and skin experiments independently when computing differential expression. When processing differential expression with the `limma` workflow, variance is shared across samples, and we choose not to share variance across tissues [@limma].
+
+Also, we observe a fraction of variance explained by RNA integrity number (RIN) score, a measure of RNA quality. Note that rather than model the RIN score continuously, we can choose to discretize the RIN score into "high" and "low" quality levels at a threshold of `r RIN_THRESHOLD` as described in figure 6 of Schroeder *et al* [-@schroeder2006the-rin].
+
+```{r, RIN_plots}
+ggplot(doe, aes(x=RIN.number)) +
+  geom_histogram(bins=30, fill="deepskyblue", color="black") +
+  geom_vline(xintercept=RIN_THRESHOLD, color="tomato", lty="dashed") +
+  labs(x="RIN score")
+```
+
+
+```{r, end_parallelization}
+stopCluster(cl)
+```
+
+# References
+
+<!-- From https://stackoverflow.com/questions/41532707/include-rmd-appendix-after-references
+ div tells Pandoc to include the refs here, rather than at the end of the document. -->
+ 
+<div id="refs"></div>
+
+------
+
+\newpage
+
+# System Information
+
+***Time required to process this report:*** *`r format(Sys.time() - startTime)`*
+
+***R session information:***
+
+```{r, echo_session_info}
+sessionInfo()
+```
+
+```{r, domino, results="asis"}
+if (Sys.getenv("DOMINO_WORKING_DIR") != "") {
+  cat(paste("\n\n## Domino environment details",
+            paste("**Domino User:**", Sys.getenv("DOMINO_PROJECT_OWNER")),
+            paste("**Domino Project:**", Sys.getenv("DOMINO_PROJECT_NAME")),
+            paste("**Domino Run ID:**", Sys.getenv("DOMINO_RUN_ID")),
+            paste("**Domino Run #:**", Sys.getenv("DOMINO_RUN_NUMBER")),
+            sep="\n\n"))
+}
+```
